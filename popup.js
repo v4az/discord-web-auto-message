@@ -162,15 +162,22 @@ function tick() {
   const rt = runtimeCache;
   const statusEl = $("discordStatus");
   const cd = $("countdown");
+  const cdLine = $("countdownLine");
 
   // heartbeat is considered live if seen within the last 4s
   const alive = rt && now - rt.heartbeat < 4000;
 
+  const setCd = (text, live) => {
+    cd.textContent = text;
+    cd.className = "countdown" + (live ? " live" : "");
+    cdLine.textContent = text;
+    cdLine.className = live ? "ok" : "amber";
+  };
+
   if (!rt || !alive) {
     statusEl.textContent = "no discord tab open";
     statusEl.className = "bad";
-    cd.textContent = "idle";
-    cd.className = "countdown";
+    setCd("no discord tab — daemon not running", false);
     return;
   }
 
@@ -186,11 +193,11 @@ function tick() {
   if (rt.intervalActive && rt.nextSendAt) {
     const remain = Math.max(0, rt.nextSendAt - now);
     const s = Math.ceil(remain / 1000);
-    cd.textContent = "next send in " + pad2(Math.floor(s / 60)) + ":" + pad2(s % 60);
-    cd.className = "countdown live";
+    setCd(pad2(Math.floor(s / 60)) + ":" + pad2(s % 60), true);
+  } else if ($("intervalEnabled").checked && $("enabled").checked) {
+    setCd("press :w save to arm", false);
   } else {
-    cd.textContent = $("intervalEnabled").checked ? "armed on save" : "idle";
-    cd.className = "countdown";
+    setCd("interval send off", false);
   }
 }
 

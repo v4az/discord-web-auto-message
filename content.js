@@ -34,6 +34,7 @@
   let nextSendAt = null; // timestamp of the next interval send
   let heartbeatTimer = null;
   let lastDiscordOpen = null;
+  let heartbeatTicks = 0;
 
   // ---- activity log (shown in the terminal UI popup) ----------------------
   function logEvent(level, text) {
@@ -98,6 +99,19 @@
         nextSendAt: intervalTimer ? nextSendAt : null,
       },
     });
+
+    // Every ~10s drop a status line into the log, including the countdown,
+    // so progress is visible even without watching the popup gauge.
+    heartbeatTicks++;
+    if (heartbeatTicks % 10 === 0) {
+      let line = `status: discord=${discordOpen ? "OPEN" : "closed"}`;
+      line += `, interval=${intervalTimer ? "on" : "off"}`;
+      line += `, reply=${config.enabled && config.reply.enabled ? "on" : "off"}`;
+      if (intervalTimer && nextSendAt) {
+        line += `, next send in ${Math.max(0, Math.ceil((nextSendAt - Date.now()) / 1000))}s`;
+      }
+      logEvent("info", line);
+    }
   }
 
   function startHeartbeat() {
@@ -112,57 +126,129 @@
   function setEditorText(editor, text) {
     editor.focus();
 
-    // Try execCommand insertText first (fires beforeinput -> Slate handles it)
+    // Clear anything already in the box so we don't append to leftovers.
+    try {
+      document.execCommand("selectAll", false, null);
+      document.execCommand("delete", false, null);
+    } catch (e) {}
+
+    // execCommand insertText fires a real beforeinput -> Slate captures it.
     let ok = false;
     try {
       ok = document.execCommand("insertText", false, text);
     } catch (e) {
       ok = false;
     }
+    logEvent("info", `insertText -> ${ok}`);
 
     if (!ok) {
-      // Fallback: simulate a paste event with the text
+      // Fallback: dispatch a beforeinput/input pair Slate also understands.
       try {
-        const dt = new DataTransfer();
-        dt.setData("text/plain", text);
-        const pasteEvent = new ClipboardEvent("paste", {
-          clipboardData: dt,
-          bubbles: true,
-          cancelable: true,
-        });
-        editor.dispatchEvent(pasteEvent);
+        editor.dispatchEvent(
+          new InputEvent("beforeinput", {
+            inputType: "insertText",
+            data: text,
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+          })
+        );
+        editor.dispatchEvent(
+          new InputEvent("input", {
+            inputType: "insertText",
+            data: text,
+            bubbles: true,
+            composed: true,
+          })
+        );
+        logEvent("info", "used beforeinput/input fallback");
       } catch (e) {
-        console.warn("[AutoMessage] paste fallback failed", e);
+        logEvent("err", "text insertion fallback failed: " + e.message);
       }
     }
   }
 
   function pressEnter(editor) {
-    const opts = {
-      key: "Enter",
-      code: "Enter",
-      keyCode: 13,
-      which: 13,
-      bubbles: true,
-      cancelable: true,
-    };
-    editor.dispatchEvent(new KeyboardEvent("keydown", opts));
-    editor.dispatchEvent(new KeyboardEvent("keypress", opts));
-    editor.dispatchEvent(new KeyboardEvent("keyup", opts));
+    // composed:true so the event crosses shadow boundaries and reaches
+    // Discord's document-level React listeners.
+    const mk = (type) =>
+      new KeyboardEvent(type, {
+        key: "Enter",
+        code: "Enter",
+        keyCode: 13,
+        which: 13,
+        charCode: type === "keypress" ? 13 : 0,
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+      });
+    editor.dispatchEvent(mk("keydown"));
+    editor.dispatchEvent(mk("keypress"));
+    editor.dispatchEvent(mk("keyup"));
+  }
+
+  function clickSendButton() {
+    const btn =
+      document.querySelector('button[aria-label="Send Message"]') ||
+      document.querySelector('button[aria-label="Send message"]') ||
+      document.querySelector('button[type="submit"][aria-label*="Send" i]');
+    if (btn) {
+      btn.click();
+      return true;
+    }
+    return false;
+  }
+
+  function boxText() {
+    const ed = findEditor();
+    return ed ? (ed.textContent || "").trim() : "";
   }
 
   function sendMessage(text) {
-    if (!text || !text.trim()) return false;
-    const editor = findEditor();
-    if (!editor) {
-      logEvent("err", "message box not found — open a channel first");
+    if (!text || !text.trim()) {
+      logEvent("err", "nothing to send (message is empty)");
       return false;
     }
+    const editor = findEditor();
+    if (!editor) {
+      logEvent("err", "message box not found — open a Discord channel first");
+      return false;
+    }
+
+    logEvent("info", "editor found → inserting text");
     setEditorText(editor, text);
-    // small delay so Slate commits the text before we hit Enter
-    setTimeout(() => pressEnter(editor), 60);
     rememberSent(text);
-    logEvent("send", "sent: " + text);
+
+    // Give Slate a moment to commit, then press Enter and verify it sent.
+    setTimeout(() => {
+      const before = boxText();
+      logEvent("info", `box before enter: "${before.slice(0, 40)}"`);
+      const ed = findEditor();
+      if (ed) {
+        ed.focus();
+        pressEnter(ed);
+      }
+
+      // verify: if the box cleared, the message was sent.
+      setTimeout(() => {
+        const after = boxText();
+        if (before && after === "") {
+          logEvent("send", "sent ✓: " + text);
+          return;
+        }
+        logEvent("err", `Enter did not send (box still: "${after.slice(0, 30)}") → trying send button`);
+        if (clickSendButton()) {
+          setTimeout(() => {
+            const a2 = boxText();
+            if (a2 === "") logEvent("send", "sent ✓ via button: " + text);
+            else logEvent("err", "send button didn't clear box either — Discord may have changed; left text in box");
+          }, 250);
+        } else {
+          logEvent("err", "no send button found — text left in box; click it once manually to focus, then retry");
+        }
+      }, 300);
+    }, 150);
+
     return true;
   }
 
@@ -178,7 +264,7 @@
       nextSendAt = Date.now() + seconds * 1000;
       writeRuntime();
     }, seconds * 1000);
-    logEvent("info", `interval send armed: every ${seconds}s`);
+    logEvent("info", `interval send armed: every ${seconds}s — first send in ${seconds}s`);
     writeRuntime();
   }
 
