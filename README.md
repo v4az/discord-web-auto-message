@@ -2,18 +2,17 @@
 
 A Chrome extension (Manifest V3) for **Discord Web** that:
 
-- ⏱️ **Interval send** — posts a message every N seconds.
 - 🤖 **Auto reply** — watches incoming messages and replies on keyword triggers
   (e.g. *if a message contains `A`, send `B`*).
 - 🌙 **Keeps running in the background** — as long as the Discord tab stays open,
   it works even when you're not looking at the tab / it's unfocused.
-- 🖥️ **Terminal-style UI** — a retro green-on-black console popup with a live
+- 🖥️ **Terminal UI** — a plain black-and-white console popup with a live
   activity log.
 
-> ⚠️ **Use responsibly.** Automating a user account ("self-botting") and
-> spamming may violate Discord's Terms of Service and can get your account
-> actioned. This project is for educational/personal-automation purposes — you
-> are responsible for how you use it.
+> ⚠️ **Use responsibly.** Automating a user account ("self-botting") may violate
+> Discord's Terms of Service and can get your account actioned. This project is
+> for educational/personal-automation purposes — you are responsible for how you
+> use it.
 
 ## Install (load unpacked)
 
@@ -24,6 +23,9 @@ A Chrome extension (Manifest V3) for **Discord Web** that:
 5. Open <https://discord.com/app>, log in, and open a channel.
 6. Click the extension icon to open the terminal UI.
 
+> After editing the code, click **↻ reload** on the extension card and refresh
+> the Discord tab to pick up changes.
+
 ## Usage
 
 Open the popup (terminal UI):
@@ -32,18 +34,16 @@ Open the popup (terminal UI):
 - **run daemon** — master on/off switch. Nothing runs unless this is on.
 
 ### Send engine
-- **method** — how a message is entered before Enter is pressed:
+- **method** — how a reply is entered before Enter is pressed:
   - `paste then enter` (default) — pastes the whole message in one shot via a
     synthetic `paste` event carrying a `DataTransfer`, just like a macro tool,
     then presses Enter. Fast.
   - `auto-type then enter` — types the message one character at a time. Slower
     but more "human"; useful if paste ever doesn't register.
 - **type-speed** — ms per character for auto-type mode.
+- **test** — type some text and hit **`>_ send`** to fire the send engine
+  immediately into the open channel, to confirm sending works.
 - If paste lands but the box stays empty, it automatically falls back to typing.
-
-### Interval send
-- Enable it, type a **message**, and set the interval in **seconds** (min 5).
-- The message is sent into whatever channel is currently open in the tab.
 
 ### Auto reply
 - Enable it and add one or more rules. Each rule is:
@@ -52,37 +52,33 @@ Open the popup (terminal UI):
   - **case-sensitive** → optional exact-case matching
 - **cooldown** throttles how often replies fire (anti-spam).
 
-Click **`:w save`** to apply. **`>_ send now`** sends the interval message
-immediately. The **live activity** console streams every send/reply/error.
+Click **`:w save`** to apply. The **live activity** console streams every
+reply/send/error.
 
-### Status & countdown
+### Status
 - The top line **`detect discord →`** shows whether the extension currently sees
   an open Discord tab with a channel ready (`OPEN — channel ready`), a Discord
   tab with no channel open, or `no discord tab open`.
-- Next to **`--message`** a **countdown** (`next send in MM:SS`) ticks down to the
-  next interval send while the daemon is running.
 - The activity log records a line each time Discord is detected or lost, so you
   can confirm the extension found Discord open.
 
 ## How it works
 
-- A content script runs on `discord.com`. It locates Discord's Slate.js message
-  box and inserts text via `execCommand("insertText")` (with a synthetic paste
-  event as a fallback), then dispatches an `Enter` keydown to send.
+- A content script runs on `discord.com`. To send, it pastes (or auto-types)
+  text into Discord's Slate.js message box so Slate's model updates, then
+  dispatches an `Enter` keydown; if that doesn't clear the box it clicks the
+  Send button as a fallback.
 - Auto-reply uses a `MutationObserver` on the message list, so new messages are
   detected whether or not the tab is focused. Already-on-screen messages are
   seeded as "processed" so it only reacts to genuinely new ones, and messages it
   sent itself are ignored to avoid reply loops.
-- Background tabs throttle JS timers to ~1s minimum, which is well within the
-  interval range here, so interval-send and auto-reply keep working while the
-  tab is open in the background.
 
 ## Files
 
 | File | Purpose |
 |------|---------|
 | `manifest.json` | MV3 manifest, permissions, content-script registration |
-| `content.js` | Core: sending, interval timer, auto-reply observer, logging |
+| `content.js` | Core: send engine, auto-reply observer, logging, heartbeat |
 | `popup.html` / `popup.js` | Terminal-style configuration UI + live log |
 
 ## Limitations / notes
@@ -91,4 +87,4 @@ immediately. The **live activity** console streams every send/reply/error.
   has no way to drive the page without it being loaded).
 - Discord's DOM/class names change over time; selectors are kept resilient but
   may need updating if Discord ships a major redesign.
-- Sends go to the **currently open channel**.
+- Replies go to the **currently open channel**.

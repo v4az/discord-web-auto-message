@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Discord Web Auto Message",
   "version": "1.0.0",
-  "description": "Auto-send messages on interval and auto-reply to keyword triggers on Discord Web. Keeps running while the Discord tab stays open in the background.",
+  "description": "Auto-reply to keyword triggers on Discord Web (if a message contains A, send B). Keeps running while the Discord tab stays open in the background.",
   "permissions": ["storage"],
   "host_permissions": [
     "https://discord.com/*",

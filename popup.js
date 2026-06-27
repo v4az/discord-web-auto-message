@@ -1,10 +1,9 @@
-/* Terminal-style popup: loads config, renders rules, streams the activity log. */
+/* Terminal-style popup: loads config, renders reply rules, streams the log. */
 
 const DEFAULT_CONFIG = {
   enabled: false,
   sendMethod: "paste",
   typingDelayMs: 25,
-  interval: { enabled: false, seconds: 60, message: "" },
   reply: { enabled: false, cooldownSeconds: 3, rules: [] },
 };
 
@@ -67,15 +66,11 @@ function updateStatus() {
 function load() {
   chrome.storage.local.get("config", (data) => {
     const c = Object.assign({}, DEFAULT_CONFIG, data.config || {});
-    c.interval = Object.assign({}, DEFAULT_CONFIG.interval, c.interval);
     c.reply = Object.assign({}, DEFAULT_CONFIG.reply, c.reply);
 
     $("enabled").checked = !!c.enabled;
     $("sendMethod").value = c.sendMethod === "type" ? "type" : "paste";
     $("typingDelay").value = c.typingDelayMs ?? 25;
-    $("intervalEnabled").checked = !!c.interval.enabled;
-    $("intervalMessage").value = c.interval.message || "";
-    $("intervalSeconds").value = c.interval.seconds || 60;
     $("replyEnabled").checked = !!c.reply.enabled;
     $("cooldown").value = c.reply.cooldownSeconds ?? 3;
 
@@ -91,11 +86,6 @@ function save() {
     enabled: $("enabled").checked,
     sendMethod: $("sendMethod").value === "type" ? "type" : "paste",
     typingDelayMs: Math.max(0, Math.min(500, +$("typingDelay").value || 25)),
-    interval: {
-      enabled: $("intervalEnabled").checked,
-      seconds: Math.max(5, +$("intervalSeconds").value || 60),
-      message: $("intervalMessage").value,
-    },
     reply: {
       enabled: $("replyEnabled").checked,
       cooldownSeconds: Math.max(0, +$("cooldown").value || 0),
@@ -112,14 +102,6 @@ function fmtTime(t) {
   return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
-const LEVEL_COLOR = {
-  send: "var(--cyan)",
-  reply: "var(--amber)",
-  err: "var(--red)",
-  info: "var(--fg-dim)",
-  ok: "var(--fg)",
-};
-
 function renderLogs(logs) {
   const con = $("console");
   con.innerHTML = "";
@@ -130,11 +112,13 @@ function renderLogs(logs) {
   logs.slice(-80).forEach((e) => {
     const div = document.createElement("div");
     div.className = "l";
-    const color = LEVEL_COLOR[e.level] || "var(--fg)";
+    // monochrome: emphasise sends/errors in bright white, dim the rest
+    const bright = e.level === "send" || e.level === "reply" || e.level === "err" || e.level === "ok";
+    const color = bright ? "var(--fg-bright)" : "var(--fg-dim)";
     div.innerHTML =
       `<span style="color:var(--fg-dim)">[${fmtTime(e.t)}]</span> ` +
       `<span style="color:${color}">${e.level.toUpperCase().padEnd(5)}</span> ` +
-      `<span>${escHtml(e.text)}</span>`;
+      `<span style="color:${bright ? "var(--fg)" : "var(--fg-dim)"}">${escHtml(e.text)}</span>`;
     con.appendChild(div);
   });
   con.scrollTop = con.scrollHeight;
@@ -158,52 +142,24 @@ function refreshLogs() {
   chrome.storage.local.get("logs", (data) => renderLogs(data.logs));
 }
 
-/* ---------- runtime: discord detection + countdown ---------- */
+/* ---------- discord detection ---------- */
 let runtimeCache = null;
-
-function pad2(n) { return String(n).padStart(2, "0"); }
 
 function tick() {
   const now = Date.now();
   const rt = runtimeCache;
   const statusEl = $("discordStatus");
-  const cd = $("countdown");
-  const cdLine = $("countdownLine");
-
-  // heartbeat is considered live if seen within the last 4s
   const alive = rt && now - rt.heartbeat < 4000;
-
-  const setCd = (text, live) => {
-    cd.textContent = text;
-    cd.className = "countdown" + (live ? " live" : "");
-    cdLine.textContent = text;
-    cdLine.className = live ? "ok" : "amber";
-  };
 
   if (!rt || !alive) {
     statusEl.textContent = "no discord tab open";
     statusEl.className = "bad";
-    setCd("no discord tab — daemon not running", false);
-    return;
-  }
-
-  if (rt.discordOpen) {
+  } else if (rt.discordOpen) {
     statusEl.textContent = "OPEN — channel ready";
     statusEl.className = "ok";
   } else {
     statusEl.textContent = "tab open, no channel";
     statusEl.className = "bad";
-  }
-
-  // countdown to next interval send
-  if (rt.intervalActive && rt.nextSendAt) {
-    const remain = Math.max(0, rt.nextSendAt - now);
-    const s = Math.ceil(remain / 1000);
-    setCd(pad2(Math.floor(s / 60)) + ":" + pad2(s % 60), true);
-  } else if ($("intervalEnabled").checked && $("enabled").checked) {
-    setCd("press :w save to arm", false);
-  } else {
-    setCd("interval send off", false);
   }
 }
 
@@ -224,7 +180,11 @@ $("save").addEventListener("click", save);
 $("clearLog").addEventListener("click", () => chrome.storage.local.set({ logs: [] }));
 
 $("sendNow").addEventListener("click", () => {
-  const text = $("intervalMessage").value;
+  const text = $("testText").value;
+  if (!text.trim()) {
+    pushLine("err", "test box is empty — type something to send");
+    return;
+  }
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     if (!tabs[0]) return;
     chrome.tabs.sendMessage(tabs[0].id, { type: "SEND_NOW", text }, () => {
@@ -247,4 +207,4 @@ chrome.storage.onChanged.addListener((changes, area) => {
 load();
 refreshLogs();
 refreshRuntime();
-setInterval(tick, 500); // smooth local countdown between heartbeats
+setInterval(tick, 1000);

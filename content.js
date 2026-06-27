@@ -1,13 +1,10 @@
 /* Discord Web Auto Message - content script
  *
- * Runs inside the Discord web tab. Two features:
- *   1. Interval send  - posts a configured message every N seconds.
- *   2. Auto reply     - watches incoming messages; when one contains a
- *                       trigger substring, posts the matching reply.
+ * Runs inside the Discord web tab. Auto reply: watches incoming messages;
+ * when one contains a trigger substring, posts the matching reply.
  *
- * Both keep working while the tab is open but unfocused/in the background.
- * (Background tabs only throttle timers to ~1s minimum, which is fine here,
- * and the MutationObserver fires regardless of focus.)
+ * Keeps working while the tab is open but unfocused/in the background.
+ * (The MutationObserver fires regardless of focus.)
  */
 
 (() => {
@@ -17,11 +14,6 @@
     enabled: false,
     sendMethod: "paste", // "paste" (fast, like a macro) or "type" (per-char)
     typingDelayMs: 25, // ms between simulated keystrokes when method = type
-    interval: {
-      enabled: false,
-      seconds: 60,
-      message: "",
-    },
     reply: {
       enabled: false,
       cooldownSeconds: 3,
@@ -31,9 +23,7 @@
   };
 
   let config = DEFAULT_CONFIG;
-  let intervalTimer = null;
   let observer = null;
-  let nextSendAt = null; // timestamp of the next interval send
   let heartbeatTimer = null;
   let lastDiscordOpen = null;
   let heartbeatTicks = 0;
@@ -80,7 +70,7 @@
     );
   }
 
-  // ---- runtime heartbeat (so the popup can show status + countdown) -------
+  // ---- runtime heartbeat (so the popup can show Discord status) -----------
   function writeRuntime() {
     const editor = findEditor();
     const discordOpen = !!editor;
@@ -97,22 +87,14 @@
         heartbeat: Date.now(),
         discordOpen,
         url: location.pathname,
-        intervalActive: !!intervalTimer,
-        nextSendAt: intervalTimer ? nextSendAt : null,
       },
     });
 
-    // Every ~10s drop a status line into the log, including the countdown,
-    // so progress is visible even without watching the popup gauge.
+    // Every ~10s drop a status line into the log so activity is visible.
     heartbeatTicks++;
     if (heartbeatTicks % 10 === 0) {
-      let line = `status: discord=${discordOpen ? "OPEN" : "closed"}`;
-      line += `, interval=${intervalTimer ? "on" : "off"}`;
-      line += `, reply=${config.enabled && config.reply.enabled ? "on" : "off"}`;
-      if (intervalTimer && nextSendAt) {
-        line += `, next send in ${Math.max(0, Math.ceil((nextSendAt - Date.now()) / 1000))}s`;
-      }
-      logEvent("info", line);
+      const reply = config.enabled && config.reply.enabled ? "on" : "off";
+      logEvent("info", `status: discord=${discordOpen ? "OPEN" : "closed"}, reply=${reply}`);
     }
   }
 
@@ -307,30 +289,6 @@
     }
   }
 
-  // ---- interval sending ---------------------------------------------------
-  function startInterval() {
-    stopInterval();
-    if (!config.enabled || !config.interval.enabled) return;
-    const seconds = Math.max(5, Number(config.interval.seconds) || 60);
-    if (!config.interval.message.trim()) return;
-    nextSendAt = Date.now() + seconds * 1000;
-    intervalTimer = setInterval(() => {
-      sendMessage(config.interval.message);
-      nextSendAt = Date.now() + seconds * 1000;
-      writeRuntime();
-    }, seconds * 1000);
-    logEvent("info", `interval send armed: every ${seconds}s — first send in ${seconds}s`);
-    writeRuntime();
-  }
-
-  function stopInterval() {
-    if (intervalTimer) {
-      clearInterval(intervalTimer);
-      intervalTimer = null;
-    }
-    nextSendAt = null;
-  }
-
   // ---- auto reply ---------------------------------------------------------
   function getMessageText(node) {
     const contentEl = node.querySelector('[id^="message-content-"]');
@@ -412,7 +370,6 @@
 
   // ---- config wiring ------------------------------------------------------
   function applyConfig() {
-    startInterval();
     if (config.enabled && config.reply.enabled) {
       startObserver();
     } else {
@@ -423,7 +380,6 @@
   function loadConfig() {
     chrome.storage.local.get("config", (data) => {
       config = Object.assign({}, DEFAULT_CONFIG, data.config || {});
-      config.interval = Object.assign({}, DEFAULT_CONFIG.interval, config.interval);
       config.reply = Object.assign({}, DEFAULT_CONFIG.reply, config.reply);
       if (!Array.isArray(config.reply.rules)) config.reply.rules = [];
       applyConfig();
@@ -433,14 +389,13 @@
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === "local" && changes.config) {
       config = Object.assign({}, DEFAULT_CONFIG, changes.config.newValue || {});
-      config.interval = Object.assign({}, DEFAULT_CONFIG.interval, config.interval);
       config.reply = Object.assign({}, DEFAULT_CONFIG.reply, config.reply);
       if (!Array.isArray(config.reply.rules)) config.reply.rules = [];
       applyConfig();
     }
   });
 
-  // Manual "send now" trigger from the popup
+  // Manual "test send" trigger from the popup
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg && msg.type === "SEND_NOW") {
       const ok = sendMessage(msg.text);
