@@ -31,6 +31,16 @@ Open the popup (terminal UI):
 ### Master
 - **run daemon** — master on/off switch. Nothing runs unless this is on.
 
+### Send engine
+- **method** — how a message is entered before Enter is pressed:
+  - `paste then enter` (default) — pastes the whole message in one shot via a
+    synthetic `paste` event carrying a `DataTransfer`, just like a macro tool,
+    then presses Enter. Fast.
+  - `auto-type then enter` — types the message one character at a time. Slower
+    but more "human"; useful if paste ever doesn't register.
+- **type-speed** — ms per character for auto-type mode.
+- If paste lands but the box stays empty, it automatically falls back to typing.
+
 ### Interval send
 - Enable it, type a **message**, and set the interval in **seconds** (min 5).
 - The message is sent into whatever channel is currently open in the tab.

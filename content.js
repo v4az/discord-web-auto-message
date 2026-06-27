@@ -15,6 +15,8 @@
 
   const DEFAULT_CONFIG = {
     enabled: false,
+    sendMethod: "paste", // "paste" (fast, like a macro) or "type" (per-char)
+    typingDelayMs: 25, // ms between simulated keystrokes when method = type
     interval: {
       enabled: false,
       seconds: 60,
@@ -121,51 +123,81 @@
   }
 
   // ---- sending a message --------------------------------------------------
-  // Discord uses a Slate.js editor, so we can't just set textContent.
-  // Insert text via execCommand/paste so Slate's onChange fires, then Enter.
-  function setEditorText(editor, text) {
+  const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // Paste the whole message in one shot, the way a macro/auto-typer does:
+  // build a DataTransfer and dispatch a `paste` ClipboardEvent that Discord's
+  // paste handler reads and feeds straight into Slate. Then we press Enter.
+  function pasteText(editor, text) {
     editor.focus();
 
-    // Clear anything already in the box so we don't append to leftovers.
+    // clear any existing draft so we don't append
     try {
       document.execCommand("selectAll", false, null);
       document.execCommand("delete", false, null);
     } catch (e) {}
 
-    // execCommand insertText fires a real beforeinput -> Slate captures it.
-    let ok = false;
-    try {
-      ok = document.execCommand("insertText", false, text);
-    } catch (e) {
-      ok = false;
-    }
-    logEvent("info", `insertText -> ${ok}`);
+    const dt = new DataTransfer();
+    dt.setData("text/plain", text);
+    const pasteEvent = new ClipboardEvent("paste", {
+      clipboardData: dt,
+      bubbles: true,
+      cancelable: true,
+    });
+    editor.dispatchEvent(pasteEvent);
 
-    if (!ok) {
-      // Fallback: dispatch a beforeinput/input pair Slate also understands.
+    const carried = pasteEvent.clipboardData
+      ? pasteEvent.clipboardData.getData("text/plain").length
+      : 0;
+    logEvent("info", `paste dispatched (clipboardData carried ${carried} chars)`);
+  }
+
+  function getCharDelay() {
+    const n = Number(config.typingDelayMs);
+    return isNaN(n) ? 25 : Math.max(0, Math.min(500, n));
+  }
+
+  // Auto-type the message one character at a time. Each character goes through
+  // a real keydown -> execCommand insertText (fires a native beforeinput/input
+  // Slate captures) -> input -> keyup, just like a person typing. Discrete
+  // per-character inputs make Slate reconcile its model, so the send button
+  // enables and Enter actually sends.
+  async function typeText(editor, text) {
+    editor.focus();
+
+    // clear any existing draft first
+    try {
+      document.execCommand("selectAll", false, null);
+      document.execCommand("delete", false, null);
+    } catch (e) {}
+
+    const charDelay = getCharDelay();
+    let typed = 0;
+    for (const ch of text) {
+      const kopts = { key: ch, bubbles: true, cancelable: true, composed: true };
+      editor.dispatchEvent(new KeyboardEvent("keydown", kopts));
+
+      let ok = false;
       try {
-        editor.dispatchEvent(
-          new InputEvent("beforeinput", {
-            inputType: "insertText",
-            data: text,
-            bubbles: true,
-            cancelable: true,
-            composed: true,
-          })
-        );
-        editor.dispatchEvent(
-          new InputEvent("input", {
-            inputType: "insertText",
-            data: text,
-            bubbles: true,
-            composed: true,
-          })
-        );
-        logEvent("info", "used beforeinput/input fallback");
+        ok = document.execCommand("insertText", false, ch);
       } catch (e) {
-        logEvent("err", "text insertion fallback failed: " + e.message);
+        ok = false;
       }
+      if (ok) typed++;
+
+      editor.dispatchEvent(
+        new InputEvent("input", {
+          inputType: "insertText",
+          data: ch,
+          bubbles: true,
+          composed: true,
+        })
+      );
+      editor.dispatchEvent(new KeyboardEvent("keyup", kopts));
+
+      if (charDelay > 0) await delay(charDelay);
     }
+    logEvent("info", `typed ${typed}/${text.length} chars (${charDelay}ms/char)`);
   }
 
   function pressEnter(editor) {
@@ -204,9 +236,15 @@
     return ed ? (ed.textContent || "").trim() : "";
   }
 
-  function sendMessage(text) {
+  let isSending = false;
+
+  async function sendMessage(text) {
     if (!text || !text.trim()) {
       logEvent("err", "nothing to send (message is empty)");
+      return false;
+    }
+    if (isSending) {
+      logEvent("info", "still typing the previous message — skipping this one");
       return false;
     }
     const editor = findEditor();
@@ -215,41 +253,58 @@
       return false;
     }
 
-    logEvent("info", "editor found → inserting text");
-    setEditorText(editor, text);
-    rememberSent(text);
+    isSending = true;
+    try {
+      const method = config.sendMethod === "type" ? "type" : "paste";
+      logEvent("info", `sending via ${method} (${text.length} chars)…`);
 
-    // Give Slate a moment to commit, then press Enter and verify it sent.
-    setTimeout(() => {
+      if (method === "paste") {
+        pasteText(editor, text);
+        await delay(150);
+        if (boxText() === "") {
+          // paste didn't land in Slate — fall back to per-char typing
+          logEvent("info", "paste left box empty → falling back to typing");
+          await typeText(editor, text);
+        }
+      } else {
+        await typeText(editor, text);
+      }
+      rememberSent(text);
+
       const before = boxText();
-      logEvent("info", `box before enter: "${before.slice(0, 40)}"`);
+      logEvent("info", `box after input: "${before.slice(0, 40)}"`);
+
+      // press Enter to send (twice, in case the first races focus/selection)
       const ed = findEditor();
       if (ed) {
         ed.focus();
         pressEnter(ed);
+        await delay(90);
+        pressEnter(ed);
       }
 
-      // verify: if the box cleared, the message was sent.
-      setTimeout(() => {
-        const after = boxText();
-        if (before && after === "") {
-          logEvent("send", "sent ✓: " + text);
-          return;
-        }
-        logEvent("err", `Enter did not send (box still: "${after.slice(0, 30)}") → trying send button`);
-        if (clickSendButton()) {
-          setTimeout(() => {
-            const a2 = boxText();
-            if (a2 === "") logEvent("send", "sent ✓ via button: " + text);
-            else logEvent("err", "send button didn't clear box either — Discord may have changed; left text in box");
-          }, 250);
-        } else {
-          logEvent("err", "no send button found — text left in box; click it once manually to focus, then retry");
-        }
-      }, 300);
-    }, 150);
+      await delay(300);
+      const after = boxText();
+      if (before && after === "") {
+        logEvent("send", "sent ✓: " + text);
+        return true;
+      }
 
-    return true;
+      logEvent("err", `Enter didn't send (box: "${after.slice(0, 30)}") → trying send button`);
+      if (clickSendButton()) {
+        await delay(250);
+        if (boxText() === "") {
+          logEvent("send", "sent ✓ via button: " + text);
+          return true;
+        }
+        logEvent("err", "send button didn't clear box either — left text in box");
+      } else {
+        logEvent("err", "no send button found — text left in box");
+      }
+      return false;
+    } finally {
+      isSending = false;
+    }
   }
 
   // ---- interval sending ---------------------------------------------------

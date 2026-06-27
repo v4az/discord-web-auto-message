@@ -2,6 +2,8 @@
 
 const DEFAULT_CONFIG = {
   enabled: false,
+  sendMethod: "paste",
+  typingDelayMs: 25,
   interval: { enabled: false, seconds: 60, message: "" },
   reply: { enabled: false, cooldownSeconds: 3, rules: [] },
 };
@@ -69,6 +71,8 @@ function load() {
     c.reply = Object.assign({}, DEFAULT_CONFIG.reply, c.reply);
 
     $("enabled").checked = !!c.enabled;
+    $("sendMethod").value = c.sendMethod === "type" ? "type" : "paste";
+    $("typingDelay").value = c.typingDelayMs ?? 25;
     $("intervalEnabled").checked = !!c.interval.enabled;
     $("intervalMessage").value = c.interval.message || "";
     $("intervalSeconds").value = c.interval.seconds || 60;
@@ -85,6 +89,8 @@ function load() {
 function save() {
   const config = {
     enabled: $("enabled").checked,
+    sendMethod: $("sendMethod").value === "type" ? "type" : "paste",
+    typingDelayMs: Math.max(0, Math.min(500, +$("typingDelay").value || 25)),
     interval: {
       enabled: $("intervalEnabled").checked,
       seconds: Math.max(5, +$("intervalSeconds").value || 60),

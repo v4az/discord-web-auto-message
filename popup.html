@@ -61,6 +61,18 @@
 
       label.field { display: block; margin: 7px 0 3px; color: var(--fg-dim); }
       .chk { display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--fg); margin: 4px 0; }
+      select {
+        width: 100%;
+        background: #000;
+        border: 1px solid var(--border);
+        color: var(--fg);
+        font-family: inherit;
+        font-size: 12px;
+        padding: 6px 8px;
+        border-radius: 3px;
+        outline: none;
+      }
+      select:focus { border-color: var(--fg); }
       input[type="text"], input[type="number"], textarea {
         width: 100%;
         background: #000;
@@ -138,6 +150,17 @@
         <legend>master</legend>
         <label class="chk"><input type="checkbox" id="enabled" /> run daemon (keep discord tab open)</label>
         <div class="hint">runs while the tab is open — even unfocused / in background.</div>
+      </fieldset>
+
+      <fieldset>
+        <legend>send-engine</legend>
+        <label class="field">--method</label>
+        <select id="sendMethod">
+          <option value="paste">paste then enter (fast, like a macro)</option>
+          <option value="type">auto-type then enter (per character)</option>
+        </select>
+        <label class="field">--type-speed (ms/char, type mode only)</label>
+        <input type="number" id="typingDelay" min="0" max="500" value="25" />
       </fieldset>
 
       <fieldset>
