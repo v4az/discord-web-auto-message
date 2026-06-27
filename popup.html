@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>autodiscord ~ terminal</title>
+    <style>
+      :root {
+        --bg: #0a0e0a;
+        --bg2: #0d130d;
+        --fg: #2fff7a;
+        --fg-dim: #1f8f48;
+        --amber: #ffb000;
+        --red: #ff5555;
+        --cyan: #38f0e0;
+        --border: #133a1f;
+      }
+      * { box-sizing: border-box; }
+      body {
+        width: 380px;
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font-family: "SFMono-Regular", "Consolas", "Liberation Mono", Menlo, monospace;
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      /* scanline texture */
+      body::before {
+        content: "";
+        position: fixed; inset: 0; pointer-events: none; z-index: 9;
+        background: repeating-linear-gradient(
+          to bottom, rgba(0,0,0,0) 0px, rgba(0,0,0,0) 2px, rgba(0,0,0,0.18) 3px);
+      }
+      .titlebar {
+        display: flex; align-items: center; gap: 8px;
+        background: var(--bg2);
+        border-bottom: 1px solid var(--border);
+        padding: 6px 10px;
+      }
+      .dot { width: 11px; height: 11px; border-radius: 50%; }
+      .dot.r { background: #ff5f56; } .dot.y { background: #ffbd2e; } .dot.g { background: #27c93f; }
+      .titlebar .title { margin-left: 6px; color: var(--fg-dim); font-size: 11px; }
+      .titlebar .status { margin-left: auto; font-size: 11px; }
+      .status.on { color: var(--fg); }
+      .status.off { color: var(--red); }
+      .screen { padding: 10px 12px; }
+      .line { white-space: pre-wrap; word-break: break-word; }
+      .prompt { color: var(--cyan); }
+      .comment { color: var(--fg-dim); }
+      .amber { color: var(--amber); }
+      .red { color: var(--red); }
+
+      fieldset {
+        border: 1px dashed var(--border);
+        border-radius: 4px;
+        margin: 0 0 12px;
+        padding: 8px 10px;
+      }
+      legend { color: var(--amber); padding: 0 6px; font-size: 11px; }
+
+      label.field { display: block; margin: 7px 0 3px; color: var(--fg-dim); }
+      .chk { display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--fg); margin: 4px 0; }
+      input[type="text"], input[type="number"], textarea {
+        width: 100%;
+        background: #000;
+        border: 1px solid var(--border);
+        color: var(--fg);
+        font-family: inherit;
+        font-size: 12px;
+        padding: 6px 8px;
+        border-radius: 3px;
+        outline: none;
+      }
+      input:focus, textarea:focus { border-color: var(--fg); box-shadow: 0 0 6px rgba(47,255,122,.25); }
+      textarea { min-height: 40px; resize: vertical; }
+      input[type="checkbox"] { accent-color: var(--fg); }
+
+      .rule { border: 1px solid var(--border); border-radius: 3px; padding: 7px; margin-bottom: 7px; background: #000; }
+      .rule .row { display: flex; gap: 6px; align-items: center; margin-bottom: 5px; }
+      .rule .row > input[type="text"] { flex: 1; }
+
+      button {
+        background: #000;
+        color: var(--fg);
+        border: 1px solid var(--fg-dim);
+        font-family: inherit;
+        font-size: 12px;
+        padding: 6px 10px;
+        border-radius: 3px;
+        cursor: pointer;
+      }
+      button:hover { background: var(--fg-dim); color: #000; }
+      button.danger { border-color: var(--red); color: var(--red); padding: 3px 7px; }
+      button.danger:hover { background: var(--red); color: #000; }
+      .btn-row { display: flex; gap: 8px; }
+      .btn-row button { flex: 1; }
+      .full { width: 100%; }
+
+      .console {
+        background: #000;
+        border: 1px solid var(--border);
+        border-radius: 3px;
+        height: 120px;
+        overflow-y: auto;
+        padding: 6px 8px;
+        font-size: 11px;
+        margin-top: 6px;
+      }
+      .console .l { white-space: pre-wrap; word-break: break-word; }
+      .cursor::after { content: "_"; animation: blink 1s steps(1) infinite; color: var(--fg); }
+      @keyframes blink { 50% { opacity: 0; } }
+      .hint { color: var(--fg-dim); font-size: 10px; margin-top: 6px; }
+      .countdown {
+        float: right; color: var(--cyan); font-size: 11px;
+        border: 1px solid var(--border); border-radius: 3px; padding: 0 6px;
+      }
+      .countdown.live { color: #000; background: var(--cyan); }
+      #discordStatus.ok { color: var(--fg); }
+      #discordStatus.bad { color: var(--red); }
+      ::-webkit-scrollbar { width: 8px; }
+      ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+    </style>
+  </head>
+  <body>
+    <div class="titlebar">
+      <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+      <span class="title">autodiscord@web:~</span>
+      <span class="status off" id="masterStatus">[ DISABLED ]</span>
+    </div>
+
+    <div class="screen">
+      <div class="line comment">// discord web auto-message daemon</div>
+      <div class="line"><span class="prompt">$</span> detect discord &rarr; <span id="discordStatus" class="amber">scanning…</span></div>
+
+      <fieldset>
+        <legend>master</legend>
+        <label class="chk"><input type="checkbox" id="enabled" /> run daemon (keep discord tab open)</label>
+        <div class="hint">runs while the tab is open — even unfocused / in background.</div>
+      </fieldset>
+
+      <fieldset>
+        <legend>interval-send</legend>
+        <label class="chk"><input type="checkbox" id="intervalEnabled" /> --enabled</label>
+        <label class="field">--message <span id="countdown" class="countdown">idle</span></label>
+        <textarea id="intervalMessage" placeholder="gm"></textarea>
+        <label class="field">--every (seconds, min 5)</label>
+        <input type="number" id="intervalSeconds" min="5" value="60" />
+      </fieldset>
+
+      <fieldset>
+        <legend>auto-reply</legend>
+        <label class="chk"><input type="checkbox" id="replyEnabled" /> --enabled</label>
+        <div id="rules"></div>
+        <button id="addRule" class="full">+ add rule [contains -> reply]</button>
+        <label class="field">--cooldown (seconds)</label>
+        <input type="number" id="cooldown" min="0" value="3" />
+        <div class="hint">rule: if msg contains "A" -> send "B"</div>
+      </fieldset>
+
+      <div class="btn-row">
+        <button id="save">:w save</button>
+        <button id="sendNow">&gt;_ send now</button>
+        <button id="clearLog">clear log</button>
+      </div>
+
+      <div class="line comment" style="margin-top:10px;">// live activity</div>
+      <div class="console" id="console"><div class="l comment cursor">awaiting events</div></div>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
